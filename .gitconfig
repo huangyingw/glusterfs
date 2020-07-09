@@ -1,0 +1,14 @@
+[remote "gluster"]
+    url = git@github.com:gluster/glusterfs.git
+    fetch = +refs/heads/*:refs/remotes/gluster/*
+[gsync]
+    remote = gluster
+    branch = master
+[branch "master"]
+	remote = gluster
+	merge = refs/heads/master
+[branch "dev"]
+    remote = origin
+    merge = refs/heads/dev
+[push]
+    remote = origin
