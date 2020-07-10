@@ -14,7 +14,6 @@ apt-get install -y make automake autoconf libtool flex bison  \
     --without-libtirpc \
     --enable-debug \
     --enable-gnfs \
-    --enable-asan
-
-make
-make install
+    --enable-asan && \
+    make && \
+    make install
