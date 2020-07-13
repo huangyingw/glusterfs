@@ -16,4 +16,5 @@ apt-get install -y make automake autoconf libtool flex bison  \
     --enable-gnfs \
     --enable-asan && \
     make && \
-    make install
+    make install && \
+    ldconfig
