@@ -1,0 +1,12 @@
+version: '2.1'
+
+services:
+    dglusterfs:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: huangyingw/glusterfs
+        volumes:
+            - ./var/logs/:/var/logs/
+            - ./:/root/glusterfs/
+        command: /bin/sh -c "/root/glusterfs/entrypoint.sh 2>&1 | tee /var/logs/containner.log"
