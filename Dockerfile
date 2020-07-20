@@ -3,7 +3,7 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND noninteractive
 WORKDIR /root/glusterfs
 
-RUN apt-get update && apt-get -y install zsh
+RUN apt-get update && apt-get -y install zsh systemd
 COPY ./build-deps.sh /root/
 RUN /root/build-deps.sh
 
