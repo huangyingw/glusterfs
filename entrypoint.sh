@@ -6,8 +6,3 @@ cd "$SCRIPTPATH"
 ./autogen.sh && \
     ./configure.sh && \
     ./make.sh
-
-systemctl start glusterd
-systemctl enable glusterd
-systemctl status glusterd
-glusterfsd --version
