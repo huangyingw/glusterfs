@@ -8,6 +8,8 @@
   cases as published by the Free Software Foundation.
 */
 
+#include <config.h>
+
 #include <sys/wait.h>
 #include "fuse-bridge.h"
 #include <glusterfs/glusterfs.h>
@@ -405,7 +407,7 @@ send_fuse_data(xlator_t *this, fuse_in_header_t *finh, void *data, size_t size)
 static int32_t
 fuse_invalidate_entry(xlator_t *this, uint64_t fuse_ino)
 {
-#if FUSE_KERNEL_MINOR_VERSION >= 11
+#if (FUSE_KERNEL_MINOR_VERSION >= 11 && defined(HAVE_FUSE_NOTIFICATIONS))
     struct fuse_out_header *fouh = NULL;
     struct fuse_notify_inval_entry_out *fnieo = NULL;
     fuse_private_t *priv = NULL;
@@ -496,7 +498,7 @@ fuse_invalidate_entry(xlator_t *this, uint64_t fuse_ino)
 static int32_t
 fuse_invalidate_inode(xlator_t *this, uint64_t fuse_ino)
 {
-#if FUSE_KERNEL_MINOR_VERSION >= 11
+#if (FUSE_KERNEL_MINOR_VERSION >= 11 && defined(HAVE_FUSE_NOTIFICATIONS))
     struct fuse_out_header *fouh = NULL;
     struct fuse_notify_inval_inode_out *fniio = NULL;
     fuse_private_t *priv = NULL;
@@ -831,18 +833,22 @@ fuse_interrupt_finish_fop(call_frame_t *frame, xlator_t *this,
         {
             intstat_orig = fir->interrupt_state;
             if (fir->interrupt_state == INTERRUPT_NONE) {
-                fir->interrupt_state = INTERRUPT_SQUELCHED;
                 if (sync) {
-                    while (fir->interrupt_state == INTERRUPT_NONE) {
+                    fir->interrupt_state = INTERRUPT_WAITING_HANDLER;
+                    while (fir->interrupt_state != INTERRUPT_SQUELCHED) {
                         pthread_cond_wait(&fir->handler_cond,
                                           &fir->handler_mutex);
                     }
-                }
+                } else
+                    fir->interrupt_state = INTERRUPT_SQUELCHED;
             }
         }
         pthread_mutex_unlock(&fir->handler_mutex);
     }
 
+    GF_ASSERT(intstat_orig == INTERRUPT_NONE ||
+              intstat_orig == INTERRUPT_HANDLED ||
+              intstat_orig == INTERRUPT_SQUELCHED);
     gf_log("glusterfs-fuse", GF_LOG_DEBUG, "intstat_orig=%d", intstat_orig);
 
     /*
@@ -892,19 +898,29 @@ fuse_interrupt_finish_interrupt(xlator_t *this, fuse_interrupt_record_t *fir,
     };
     fuse_interrupt_state_t intstat_orig = INTERRUPT_NONE;
 
+    GF_ASSERT(intstat == INTERRUPT_HANDLED || intstat == INTERRUPT_SQUELCHED);
+
     pthread_mutex_lock(&fir->handler_mutex);
     {
         intstat_orig = fir->interrupt_state;
-        if (fir->interrupt_state == INTERRUPT_NONE) {
-            fir->interrupt_state = intstat;
-            if (sync) {
+        switch (intstat_orig) {
+            case INTERRUPT_NONE:
+                fir->interrupt_state = intstat;
+                break;
+            case INTERRUPT_WAITING_HANDLER:
+                fir->interrupt_state = INTERRUPT_SQUELCHED;
                 pthread_cond_signal(&fir->handler_cond);
-            }
+                break;
+            default:
+                break;
         }
         finh = fir->fuse_in_header;
     }
     pthread_mutex_unlock(&fir->handler_mutex);
 
+    GF_ASSERT(intstat_orig == INTERRUPT_NONE ||
+              (sync && intstat_orig == INTERRUPT_WAITING_HANDLER) ||
+              (!sync && intstat_orig == INTERRUPT_SQUELCHED));
     gf_log("glusterfs-fuse", GF_LOG_DEBUG, "intstat_orig=%d", intstat_orig);
 
     /*
@@ -4721,12 +4737,10 @@ fuse_setlk_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
     fuse_state_t *state = NULL;
     int ret = 0;
 
-    ret = fuse_interrupt_finish_fop(frame, this, _gf_false, (void **)&state);
-    if (state) {
-        GF_FREE(state->name);
-        dict_unref(state->xdata);
-        GF_FREE(state);
-    }
+    ret = fuse_interrupt_finish_fop(frame, this, _gf_true, (void **)&state);
+    GF_FREE(state->name);
+    dict_unref(state->xdata);
+    GF_FREE(state);
     if (ret) {
         return 0;
     }
@@ -4783,17 +4797,10 @@ fuse_setlk_interrupt_handler_cbk(call_frame_t *frame, void *cookie,
 {
     fuse_interrupt_state_t intstat = INTERRUPT_NONE;
     fuse_interrupt_record_t *fir = cookie;
-    fuse_state_t *state = NULL;
 
     intstat = op_ret >= 0 ? INTERRUPT_HANDLED : INTERRUPT_SQUELCHED;
 
-    fuse_interrupt_finish_interrupt(this, fir, intstat, _gf_false,
-                                    (void **)&state);
-    if (state) {
-        GF_FREE(state->name);
-        dict_unref(state->xdata);
-        GF_FREE(state);
-    }
+    fuse_interrupt_finish_interrupt(this, fir, intstat, _gf_true, NULL);
 
     STACK_DESTROY(frame->root);
 
@@ -4918,7 +4925,7 @@ fuse_setlk(xlator_t *this, fuse_in_header_t *finh, void *msg,
     return;
 }
 
-#if FUSE_KERNEL_MINOR_VERSION >= 11
+#if FUSE_KERNEL_MINOR_VERSION >= 11 && defined(HAVE_FUSE_NOTIFICATIONS)
 static void *
 notify_kernel_loop(void *data)
 {
@@ -5165,6 +5172,7 @@ fuse_init(xlator_t *this, fuse_in_header_t *finh, void *msg,
     priv->timed_response_fuse_thread_started = _gf_true;
 
     /* Used for 'reverse invalidation of inode' */
+#ifdef HAVE_FUSE_NOTIFICATIONS
     if (fini->minor >= 12) {
         ret = gf_thread_create(&messenger, NULL, notify_kernel_loop, this,
                                "fusenoti");
@@ -5176,7 +5184,9 @@ fuse_init(xlator_t *this, fuse_in_header_t *finh, void *msg,
             goto out;
         }
         priv->reverse_fuse_thread_started = _gf_true;
-    } else {
+    } else
+#endif
+    {
         /*
          * FUSE minor < 12 does not implement invalidate notifications.
          * This mechanism is required for fopen-keep-cache to operate
