@@ -79,6 +79,14 @@
 #include <sys/sockio.h>
 #endif
 
+#ifdef __FreeBSD__
+#include <sys/sysctl.h>
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <libprocstat.h>
+#include <libutil.h>
+#endif
+
 #define NFS_PROGRAM 100003
 #define NFSV3_VERSION 3
 
@@ -6420,7 +6428,6 @@ find_compatible_brick(glusterd_conf_t *conf, glusterd_volinfo_t *volinfo,
 int
 glusterd_get_sock_from_brick_pid(int pid, char *sockpath, size_t len)
 {
-    char fname[128] = "";
     char buf[1024] = "";
     char cmdline[2048] = "";
     xlator_t *this = NULL;
@@ -6435,6 +6442,22 @@ glusterd_get_sock_from_brick_pid(int pid, char *sockpath, size_t len)
     this = THIS;
     GF_ASSERT(this);
 
+#ifdef __FreeBSD__
+    blen = sizeof(buf);
+    int mib[4];
+
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_ARGS;
+    mib[3] = pid;
+
+    if (sys_sysctl(mib, 4, buf, &blen, NULL, blen) != 0) {
+        gf_log(this->name, GF_LOG_ERROR, "brick process %d is not running",
+               pid);
+        return ret;
+    }
+#else
+    char fname[128] = "";
     snprintf(fname, sizeof(fname), "/proc/%d/cmdline", pid);
 
     if (sys_access(fname, R_OK) != 0) {
@@ -6451,6 +6474,7 @@ glusterd_get_sock_from_brick_pid(int pid, char *sockpath, size_t len)
                strerror(errno), fname);
         return ret;
     }
+#endif
 
     /* convert cmdline to single string */
     for (i = 0, j = 0; i < blen; i++) {
@@ -6499,6 +6523,43 @@ glusterd_get_sock_from_brick_pid(int pid, char *sockpath, size_t len)
 char *
 search_brick_path_from_proc(pid_t brick_pid, char *brickpath)
 {
+    char *brick_path = NULL;
+#ifdef __FreeBSD__
+    struct filestat *fst;
+    struct procstat *ps;
+    struct kinfo_proc *kp;
+    struct filestat_list *head;
+
+    ps = procstat_open_sysctl();
+    if (ps == NULL)
+        goto out;
+
+    kp = kinfo_getproc(brick_pid);
+    if (kp == NULL)
+        goto out;
+
+    head = procstat_getfiles(ps, (void *)kp, 0);
+    if (head == NULL)
+        goto out;
+
+    STAILQ_FOREACH(fst, head, next)
+    {
+        if (fst->fs_fd < 0)
+            continue;
+
+        if (!strcmp(fst->fs_path, brickpath)) {
+            brick_path = gf_strdup(fst->fs_path);
+            break;
+        }
+    }
+
+out:
+    if (head != NULL)
+        procstat_freefiles(ps, head);
+    if (kp != NULL)
+        free(kp);
+    procstat_close(ps);
+#else
     struct dirent *dp = NULL;
     DIR *dirp = NULL;
     size_t len = 0;
@@ -6509,7 +6570,6 @@ search_brick_path_from_proc(pid_t brick_pid, char *brickpath)
             0,
         },
     };
-    char *brick_path = NULL;
 
     if (!brickpath)
         goto out;
@@ -6547,6 +6607,7 @@ search_brick_path_from_proc(pid_t brick_pid, char *brickpath)
 out:
     if (dirp)
         sys_closedir(dirp);
+#endif
     return brick_path;
 }
 
@@ -14632,7 +14693,8 @@ glusterd_compare_addrinfo(struct addrinfo *first, struct addrinfo *next)
  */
 int32_t
 glusterd_check_brick_order(dict_t *dict, char *err_str, int32_t type,
-                           int32_t sub_count)
+                           char **volname, char **brick_list,
+                           int32_t *brick_count, int32_t sub_count)
 {
     int ret = -1;
     int i = 0;
@@ -14643,12 +14705,9 @@ glusterd_check_brick_order(dict_t *dict, char *err_str, int32_t type,
     addrinfo_list_t *ai_list_tmp1 = NULL;
     addrinfo_list_t *ai_list_tmp2 = NULL;
     char *brick = NULL;
-    char *brick_list = NULL;
     char *brick_list_dup = NULL;
     char *brick_list_ptr = NULL;
     char *tmpptr = NULL;
-    char *volname = NULL;
-    int32_t brick_count = 0;
     struct addrinfo *ai_info = NULL;
     char brick_addr[128] = {
         0,
@@ -14676,32 +14735,38 @@ glusterd_check_brick_order(dict_t *dict, char *err_str, int32_t type,
     ai_list->info = NULL;
     CDS_INIT_LIST_HEAD(&ai_list->list);
 
-    ret = dict_get_strn(dict, "volname", SLEN("volname"), &volname);
-    if (ret) {
-        gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
-               "Unable to get volume name");
-        goto out;
+    if (!(*volname)) {
+        ret = dict_get_strn(dict, "volname", SLEN("volname"), &(*volname));
+        if (ret) {
+            gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
+                   "Unable to get volume name");
+            goto out;
+        }
     }
 
-    ret = dict_get_strn(dict, "bricks", SLEN("bricks"), &brick_list);
-    if (ret) {
-        gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
-               "Bricks check : Could not "
-               "retrieve bricks list");
-        goto out;
+    if (!(*brick_list)) {
+        ret = dict_get_strn(dict, "bricks", SLEN("bricks"), &(*brick_list));
+        if (ret) {
+            gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
+                   "Bricks check : Could not "
+                   "retrieve bricks list");
+            goto out;
+        }
     }
 
-    ret = dict_get_int32n(dict, "count", SLEN("count"), &brick_count);
-    if (ret) {
-        gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
-               "Bricks check : Could not "
-               "retrieve brick count");
-        goto out;
+    if (!(*brick_count)) {
+        ret = dict_get_int32n(dict, "count", SLEN("count"), &(*brick_count));
+        if (ret) {
+            gf_msg(this->name, GF_LOG_ERROR, 0, GD_MSG_DICT_GET_FAILED,
+                   "Bricks check : Could not "
+                   "retrieve brick count");
+            goto out;
+        }
     }
 
-    brick_list_dup = brick_list_ptr = gf_strdup(brick_list);
+    brick_list_dup = brick_list_ptr = gf_strdup(*brick_list);
     /* Resolve hostnames and get addrinfo */
-    while (i < brick_count) {
+    while (i < *brick_count) {
         ++i;
         brick = strtok_r(brick_list_dup, " \n", &tmpptr);
         brick_list_dup = tmpptr;
@@ -14738,7 +14803,7 @@ glusterd_check_brick_order(dict_t *dict, char *err_str, int32_t type,
     ai_list_tmp1 = cds_list_entry(ai_list->list.next, addrinfo_list_t, list);
 
     /* Check for bad brick order */
-    while (i < brick_count) {
+    while (i < *brick_count) {
         ++i;
         ai_info = ai_list_tmp1->info;
         ai_list_tmp1 = cds_list_entry(ai_list_tmp1->list.next, addrinfo_list_t,

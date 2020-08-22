@@ -164,6 +164,8 @@ AC_CONFIG_FILES([Makefile
                 xlators/features/cloudsync/src/cloudsync-plugins/src/cloudsyncs3/src/Makefile
                 xlators/features/cloudsync/src/cloudsync-plugins/src/cvlt/Makefile
                 xlators/features/cloudsync/src/cloudsync-plugins/src/cvlt/src/Makefile
+                xlators/features/metadisp/Makefile
+                xlators/features/metadisp/src/Makefile
                 xlators/playground/Makefile
                 xlators/playground/template/Makefile
                 xlators/playground/template/src/Makefile
@@ -301,6 +303,21 @@ if test "x$enable_tsan" = "xyes"; then
         SANITIZER=tsan
         AC_CHECK_LIB([tsan], [__tsan_init], ,
                 [AC_MSG_ERROR([--enable-tsan requires libtsan.so, exiting])])
+        if test "x$ac_cv_lib_tsan___tsan_init" = xyes; then
+                AC_MSG_CHECKING([whether tsan API can be used])
+                saved_CFLAGS=${CFLAGS}
+                CFLAGS="${CFLAGS} -fsanitize=thread"
+                AC_COMPILE_IFELSE(
+                [AC_LANG_PROGRAM([
+                   [#include <sanitizer/tsan_interface.h>]],
+                   [[__tsan_create_fiber(0)]])],
+                   [TSAN_API=yes], [TSAN_API=no])
+                AC_MSG_RESULT([$TSAN_API])
+                if test x$TSAN_API = "xyes"; then
+                   AC_DEFINE(HAVE_TSAN_API, 1, [Define if tsan API can be used.])
+                fi
+                CFLAGS=${saved_CFLAGS}
+        fi
         GF_CFLAGS="${GF_CFLAGS} -O2 -g -fsanitize=thread -fno-omit-frame-pointer"
         GF_LDFLAGS="${GF_LDFLAGS} -ltsan"
 fi
@@ -794,6 +811,17 @@ if test "x${with_server}" = "xyes" -a "x$enable_georeplication" != "xno"; then
 fi
 AC_SUBST(GEOREP_EXTRAS_SUBDIR)
 AM_CONDITIONAL(USE_GEOREP, test "x$enable_georeplication" != "xno")
+
+# METADISP section
+AC_ARG_ENABLE([metadisp],
+              AC_HELP_STRING([--enable-metadisp],
+                             [Enable the metadata dispersal xlator]))
+BUILD_METADISP=no
+if test "x${enable_metadisp}" = "xyes"; then
+  BUILD_METADISP=yes
+fi
+AM_CONDITIONAL([BUILD_METADISP], [test "x$BUILD_METADISP" = "xyes"])
+# end METADISP section
 
 # Events section
 AC_ARG_ENABLE([events],
@@ -1564,6 +1592,13 @@ AC_SUBST(AM_LIBTOOLFLAGS)
 AC_SUBST(GF_NO_UNDEFINED)
 AC_SUBST(GF_XLATOR_DEFAULT_LDFLAGS)
 AC_SUBST(GF_XLATOR_LDFLAGS)
+AC_SUBST(GF_XLATOR_MGNT_LIBADD)
+
+case $host_os in
+     *freebsd*)
+        GF_XLATOR_MGNT_LIBADD="-lutil -lprocstat"
+        ;;
+esac
 
 CONTRIBDIR='$(top_srcdir)/contrib'
 AC_SUBST(CONTRIBDIR)
@@ -1653,6 +1688,7 @@ echo "IPV6 default         : $with_ipv6_default"
 echo "Use TIRPC            : $with_libtirpc"
 echo "With Python          : ${PYTHON_VERSION}"
 echo "Cloudsync            : $BUILD_CLOUDSYNC"
+echo "Metadata dispersal   : $BUILD_METADISP"
 echo "Link with TCMALLOC   : $BUILD_TCMALLOC"
 echo
 

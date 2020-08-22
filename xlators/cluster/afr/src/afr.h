@@ -1271,8 +1271,8 @@ int
 afr_inode_split_brain_choice_set(inode_t *inode, xlator_t *this,
                                  int spb_choice);
 int
-afr_inode_split_brain_choice_get(inode_t *inode, xlator_t *this,
-                                 int *spb_choice);
+afr_split_brain_read_subvol_get(inode_t *inode, xlator_t *this,
+                                call_frame_t *frame, int *spb_subvol);
 int
 afr_get_child_index_from_name(xlator_t *this, char *name);
 
@@ -1357,7 +1357,7 @@ int
 afr_set_inode_local(xlator_t *this, afr_local_t *local, inode_t *inode);
 
 int
-afr_fill_ta_loc(xlator_t *this, loc_t *loc);
+afr_fill_ta_loc(xlator_t *this, loc_t *loc, gf_boolean_t is_gfid_based_fop);
 
 int
 afr_ta_post_op_lock(xlator_t *this, loc_t *loc);

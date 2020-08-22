@@ -328,6 +328,7 @@ function get_bug_list_for_disabled_test ()
 function run_tests()
 {
     RES=0
+    FLAKY=''
     FAILED=''
     TESTS_NEEDED_RETRY=''
     GENERATED_CORE=''
@@ -349,14 +350,15 @@ function run_tests()
         timeout_cmd_exists="no"
     fi
 
-    for t in $(find ${regression_testsdir}/tests -name '*.t' \
-               | LC_COLLATE=C sort) ; do
+    all_tests=($(find ${regression_testsdir}/tests -name '*.t' | sort))
+    all_tests_cnt=${#all_tests[@]}
+    for t in "${all_tests[@]}" ; do
         old_cores=$(ls /*-*.core 2> /dev/null | wc -l)
         total_tests=$((total_tests+1))
         if match $t "$@" ; then
             selected_tests=$((selected_tests+1))
             echo
-            echo $section_separator$section_separator
+            echo $section_separator "(${total_tests} / ${all_tests_cnt})" $section_separator
             if [[ $(get_test_status $t) =~ "BAD_TEST" ]] && \
                [[ $skip_bad_tests == "yes" ]]
             then
@@ -432,9 +434,17 @@ function run_tests()
 
                 TESTS_NEEDED_RETRY="${TESTS_NEEDED_RETRY}${t} "
             fi
+
+
             if [ ${TMP_RES} -ne 0 ] ; then
-                RES=${TMP_RES}
-                FAILED="${FAILED}${t} "
+		if [[ "$t" == *"tests/000-flaky/"* ]]; then
+                    FLAKY="${FLAKY}${t} "
+		    echo "FAILURE -> SUCCESS: Flaky test"
+		    TMP_RES=0
+		else
+                    RES=${TMP_RES}
+                    FAILED="${FAILED}${t} "
+		fi
             fi
 
             new_cores=$(ls /*-*.core 2> /dev/null | wc -l)
@@ -469,8 +479,10 @@ function run_tests()
         echo "$key  -  ${ELAPSEDTIMEMAP["$key"]} second"
     done | sort -rn -k3
 
-    # Output the errors into a file
+    # initialize the output file
     echo > "${result_output}"
+
+    # Output the errors into a file
     if [ ${RES} -ne 0 ] ; then
         FAILED=$( echo ${FAILED} | tr ' ' '\n' | sort -u )
         FAILED_COUNT=$( echo -n "${FAILED}" | grep -c '^' )
@@ -483,7 +495,13 @@ function run_tests()
     TESTS_NEEDED_RETRY=$( echo ${TESTS_NEEDED_RETRY} | tr ' ' '\n' | sort -u )
     RETRY_COUNT=$( echo -n "${TESTS_NEEDED_RETRY}" | grep -c '^' )
     if [ ${RETRY_COUNT} -ne 0 ] ; then
-        echo -e "\n${RETRY_COUNT} test(s) needed retry \n${TESTS_NEEDED_RETRY}"
+        echo -e "\n${RETRY_COUNT} test(s) needed retry \n${TESTS_NEEDED_RETRY}" >> "${result_output}"
+    fi
+
+    FLAKY_TESTS_FAILED=$( echo ${FLAKY} | tr ' ' '\n' | sort -u )
+    RETRY_COUNT=$( echo -n "${FLAKY_TESTS_FAILED}" | grep -c '^' )
+    if [ ${RETRY_COUNT} -ne 0 ] ; then
+        echo -e "\n${RETRY_COUNT} flaky test(s) marked as success even though they failed \n${FLAKY_TESTS_FAILED}" >> "${result_output}"
     fi
 
     echo

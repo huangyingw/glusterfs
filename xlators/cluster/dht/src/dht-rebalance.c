@@ -2895,8 +2895,7 @@ gf_defrag_migrate_single_file(void *opaque)
 
     if (defrag->stats == _gf_true) {
         gettimeofday(&end, NULL);
-        elapsed = (end.tv_sec - start.tv_sec) * 1e6 +
-                  (end.tv_usec - start.tv_usec);
+        elapsed = gf_tvdiff(&start, &end);
         gf_log(this->name, GF_LOG_INFO,
                "Migration of "
                "file:%s size:%" PRIu64
@@ -3500,8 +3499,7 @@ gf_defrag_process_dir(xlator_t *this, gf_defrag_info_t *defrag, loc_t *loc,
     }
 
     gettimeofday(&end, NULL);
-    elapsed = (end.tv_sec - dir_start.tv_sec) * 1e6 +
-              (end.tv_usec - dir_start.tv_usec);
+    elapsed = gf_tvdiff(&dir_start, &end);
     gf_log(this->name, GF_LOG_INFO,
            "Migration operation on dir %s took "
            "%.2f secs",
@@ -4534,9 +4532,6 @@ dht_file_counter_thread(void *args)
     struct timespec time_to_wait = {
         0,
     };
-    struct timeval now = {
-        0,
-    };
     uint64_t tmp_size = 0;
 
     if (!args)
@@ -4546,9 +4541,8 @@ dht_file_counter_thread(void *args)
     dht_build_root_loc(defrag->root_inode, &root_loc);
 
     while (defrag->defrag_status == GF_DEFRAG_STATUS_STARTED) {
-        gettimeofday(&now, NULL);
-        time_to_wait.tv_sec = now.tv_sec + 600;
-        time_to_wait.tv_nsec = 0;
+        timespec_now(&time_to_wait);
+        time_to_wait.tv_sec += 600;
 
         pthread_mutex_lock(&defrag->fc_mutex);
         pthread_cond_timedwait(&defrag->fc_wakeup_cond, &defrag->fc_mutex,
@@ -4786,7 +4780,8 @@ gf_defrag_start_crawl(void *data)
     if (!defrag)
         goto exit;
 
-    gettimeofday(&defrag->start_time, NULL);
+    defrag->start_time = gf_time();
+
     dht_build_root_inode(this, &defrag->root_inode);
     if (!defrag->root_inode)
         goto out;
@@ -5069,9 +5064,6 @@ gf_defrag_get_estimates_based_on_size(dht_conf_t *conf)
     uint64_t total_processed = 0;
     uint64_t tmp_count = 0;
     uint64_t time_to_complete = 0;
-    struct timeval now = {
-        0,
-    };
     double elapsed = 0;
 
     defrag = conf->defrag;
@@ -5079,8 +5071,7 @@ gf_defrag_get_estimates_based_on_size(dht_conf_t *conf)
     if (!g_totalsize)
         goto out;
 
-    gettimeofday(&now, NULL);
-    elapsed = now.tv_sec - defrag->start_time.tv_sec;
+    elapsed = gf_time() - defrag->start_time;
 
     /* Don't calculate the estimates for the first 10 minutes.
      * It is unlikely to be accurate and estimates are not required
@@ -5134,9 +5125,6 @@ gf_defrag_status_get(dht_conf_t *conf, dict_t *dict)
     uint64_t demoted = 0;
     char *status = "";
     double elapsed = 0;
-    struct timeval end = {
-        0,
-    };
     uint64_t time_to_complete = 0;
     uint64_t time_left = 0;
     gf_defrag_info_t *defrag = conf->defrag;
@@ -5156,9 +5144,7 @@ gf_defrag_status_get(dht_conf_t *conf, dict_t *dict)
     promoted = defrag->total_files_promoted;
     demoted = defrag->total_files_demoted;
 
-    gettimeofday(&end, NULL);
-
-    elapsed = end.tv_sec - defrag->start_time.tv_sec;
+    elapsed = gf_time() - defrag->start_time;
 
     /* The rebalance is still in progress */
 

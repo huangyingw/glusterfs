@@ -438,7 +438,7 @@ gf_resolve_path_parent(const char *path)
 
     GF_VALIDATE_OR_GOTO(THIS->name, path, out);
 
-    if (strlen(path) <= 0) {
+    if (0 == strlen(path)) {
         gf_msg_callingfn(THIS->name, GF_LOG_DEBUG, 0, LG_MSG_INVALID_STRING,
                          "invalid string for 'path'");
         goto out;
@@ -646,7 +646,7 @@ gf_rev_dns_lookup_cached(const char *ip, struct dnscache *dnscache)
     if (entrydata) {
         dnsentry = (struct dnscache_entry *)entrydata->data;
         /* First check the TTL & timestamp */
-        if (time(NULL) - dnsentry->timestamp > dnscache->ttl) {
+        if (gf_time() - dnsentry->timestamp > dnscache->ttl) {
             gf_dnscache_entry_deinit(dnsentry);
             entrydata->data = NULL; /* Mark this as 'null' so
                                      * dict_del () doesn't try free
@@ -677,23 +677,16 @@ gf_rev_dns_lookup_cached(const char *ip, struct dnscache *dnscache)
     from_cache = _gf_false;
 out:
     /* Insert into the cache */
-    if (fqdn && !from_cache) {
+    if (fqdn && !from_cache && ip) {
         struct dnscache_entry *entry = gf_dnscache_entry_init();
 
-        if (!entry) {
-            goto out;
+        if (entry) {
+            entry->fqdn = fqdn;
+            entry->ip = gf_strdup(ip);
+            entry->timestamp = gf_time();
+            entrydata = bin_to_data(entry, sizeof(*entry));
+            dict_set(cache, (char *)ip, entrydata);
         }
-        entry->fqdn = fqdn;
-        if (!ip) {
-            gf_dnscache_entry_deinit(entry);
-            goto out;
-        }
-
-        entry->ip = gf_strdup(ip);
-        entry->timestamp = time(NULL);
-
-        entrydata = bin_to_data(entry, sizeof(*entry));
-        dict_set(cache, (char *)ip, entrydata);
     }
     return fqdn;
 }
@@ -942,7 +935,7 @@ gf_print_trace(int32_t signum, glusterfs_ctx_t *ctx)
     {
         /* Dump the timestamp of the crash too, so the previous logs
            can be related */
-        gf_time_fmt(timestr, sizeof timestr, time(NULL), gf_timefmt_FT);
+        gf_time_fmt(timestr, sizeof timestr, gf_time(), gf_timefmt_FT);
         gf_msg_plain_nomem(GF_LOG_ALERT, "time of crash: ");
         gf_msg_plain_nomem(GF_LOG_ALERT, timestr);
     }
@@ -3126,7 +3119,7 @@ get_mem_size()
     memsize = page_size * num_pages;
 #endif
 
-#if defined GF_DARWIN_HOST_OS
+#if defined GF_DARWIN_HOST_OS || defined __FreeBSD__
 
     size_t len = sizeof(memsize);
     int name[] = {CTL_HW, HW_PHYSMEM};
@@ -4140,6 +4133,14 @@ gf_skip_header_section(int fd, int header_len)
 gf_boolean_t
 gf_is_pid_running(int pid)
 {
+#ifdef __FreeBSD__
+    int ret = -1;
+
+    ret = sys_kill(pid, 0);
+    if (ret < 0) {
+        return _gf_false;
+    }
+#else
     char fname[32] = {
         0,
     };
@@ -4153,6 +4154,7 @@ gf_is_pid_running(int pid)
     }
 
     sys_close(fd);
+#endif
     return _gf_true;
 }
 
@@ -4394,7 +4396,7 @@ gf_backtrace_end(char *buf, size_t frames)
 
     frames = min(frames, GF_BACKTRACE_LEN - pos - 1);
 
-    if (frames <= 0)
+    if (0 == frames)
         return;
 
     memset(buf + pos, ')', frames);

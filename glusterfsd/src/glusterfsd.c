@@ -1687,6 +1687,10 @@ glusterfs_ctx_defaults_init(glusterfs_ctx_t *ctx)
 
     INIT_LIST_HEAD(&cmd_args->xlator_options);
     INIT_LIST_HEAD(&cmd_args->volfile_servers);
+    ctx->pxl_count = 0;
+    pthread_mutex_init(&ctx->fd_lock, NULL);
+    pthread_cond_init(&ctx->fd_cond, NULL);
+    INIT_LIST_HEAD(&ctx->janitor_fds);
 
     lim.rlim_cur = RLIM_INFINITY;
     lim.rlim_max = RLIM_INFINITY;
@@ -2079,8 +2083,8 @@ parse_cmdline(int argc, char *argv[], glusterfs_ctx_t *ctx)
         if (((ret == 0) &&
              (S_ISREG(stbuf.st_mode) || S_ISLNK(stbuf.st_mode))) ||
             (ret == -1)) {
-            /* Have separate logfile per run */
-            gf_time_fmt(timestr, sizeof timestr, time(NULL), gf_timefmt_FT);
+            /* Have separate logfile per run. */
+            gf_time_fmt(timestr, sizeof timestr, gf_time(), gf_timefmt_FT);
             sprintf(tmp_logfile, "%s.%s.%d", cmd_args->log_file, timestr,
                     getpid());
 
