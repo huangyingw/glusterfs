@@ -6,4 +6,5 @@ cd "$SCRIPTPATH"
 ./build-deps.sh
 ./autogen.sh && \
     ./configure.sh && \
-    ./make.sh
+    ./make.sh && \
+    systemctl daemon-reload
